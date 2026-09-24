@@ -3,7 +3,7 @@
     "name": "Auto Clicker Pro",
     "version": "4.0",
     "description": "An advanced auto clicker with a mouse recorder to automate click sequences.",
-    "permissions": ["contextMenus", "scripting", "activeTab", "storage"],
+    "permissions": ["contextMenus", "scripting", "activeTab", "storage", "downloads"],
     "commands": {
         "toggle-recording": {
             "suggested_key": {

@@ -13,8 +13,8 @@ chrome.runtime.onInstalled.addListener(() => {
         isRecording: false,
         runningTabId: null,
         steps: [],
-        loopSettings: { enabled: false, infinite: false, count: 5 },
-        smartMode: false,
+        loopSettings: { enabled: true, infinite: false, count: 5, delay: 2000 },
+        smartMode: true,
         selectedArea: null,
         paragraphs: []
     });
