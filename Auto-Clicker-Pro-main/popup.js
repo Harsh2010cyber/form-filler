@@ -78,7 +78,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let smartModeEnabled = true;
 
     // ========================================================
-    // Smart Mode Toggle
+    // Smart Mode Toggle & Tool Handlers
     // ========================================================
     smartToggle.addEventListener('click', () => {
         smartModeEnabled = !smartModeEnabled;
@@ -87,6 +87,65 @@ document.addEventListener('DOMContentLoaded', () => {
         colorConditionBtn.disabled = !smartModeEnabled;
         textConditionBtn.disabled = !smartModeEnabled;
         chrome.storage.local.set({ smartMode: smartModeEnabled });
+    });
+
+    // --- Area Selection ---
+    selectAreaBtn.addEventListener('click', () => {
+        if (!smartModeEnabled) return;
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+            const tab = tabs[0];
+            if (tab && (tab.url.startsWith('chrome://') || tab.url.startsWith('edge://') || tab.url.startsWith('https://chrome.google.com'))) {
+                alert('Area selection is not allowed on this browser page.');
+                return;
+            }
+            chrome.tabs.sendMessage(tab.id, { action: 'startAreaSelection' });
+            window.close();
+        });
+    });
+
+    // --- Condition Launcher Modal ---
+    const conditionModal = document.getElementById('conditionModal');
+    const cancelCondition = document.getElementById('cancelCondition');
+    const launchColorCondition = document.getElementById('launchColorCondition');
+    const launchTextCondition = document.getElementById('launchTextCondition');
+
+    const showConditionLauncher = () => {
+        if (!smartModeEnabled) return;
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+            const tab = tabs[0];
+            if (tab && (tab.url.startsWith('chrome://') || tab.url.startsWith('edge://') || tab.url.startsWith('https://chrome.google.com'))) {
+                alert('Conditions are not allowed on this browser page.');
+                return;
+            }
+            conditionModal.style.display = 'flex';
+        });
+    };
+
+    colorConditionBtn.addEventListener('click', showConditionLauncher);
+    textConditionBtn.addEventListener('click', showConditionLauncher);
+
+    cancelCondition.addEventListener('click', () => {
+        conditionModal.style.display = 'none';
+    });
+
+    launchColorCondition.addEventListener('click', () => {
+        conditionModal.style.display = 'none';
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+            if (tabs[0]) {
+                chrome.tabs.sendMessage(tabs[0].id, { action: 'startColorCondition' });
+                setTimeout(() => window.close(), 100);
+            }
+        });
+    });
+
+    launchTextCondition.addEventListener('click', () => {
+        conditionModal.style.display = 'none';
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+            if (tabs[0]) {
+                chrome.tabs.sendMessage(tabs[0].id, { action: 'startTextCondition' });
+                setTimeout(() => window.close(), 100);
+            }
+        });
     });
 
     // ========================================================
@@ -164,12 +223,27 @@ document.addEventListener('DOMContentLoaded', () => {
                 const previewVal = step.value ? `"${step.value.substring(0, 25)}${step.value.length > 25 ? '...' : ''}"` : '(empty)';
                 titleText = `${step.tagName || 'FIELD'}: ${previewVal}`;
                 subText = `${step.selector || 'auto'} · Same info every rotation`;
-                toggleParaBtnHtml = `<button class="toggle-para-btn" data-index="${index}" title="Convert into dynamic paragraph box from TXT file">📄 Set as Para Box</button>`;
+                toggleParaBtnHtml = `<button class="toggle-para-btn" data-index="${index}" title="Convert to dynamic paragraph box or clipboard paste">✍️ Static</button>`;
+            } else if (step.action === 'pasteClipboard') {
+                li.classList.add('step-clipboard');
+                badgeHtml = '<span class="step-type-badge type-clipboard">📋 PASTE CLIPBOARD</span>';
+                titleText = `${step.tagName || 'FIELD'} (Pastes Clipboard)`;
+                subText = `${step.selector || 'auto'} · Pastes system clipboard`;
+                toggleParaBtnHtml = `<button class="toggle-para-btn" data-index="${index}" title="Convert into dynamic paragraph box">📋 Paste</button>`;
             } else if (step.action === 'selectOption') {
                 li.classList.add('step-select');
                 badgeHtml = '<span class="step-type-badge type-select">🔽 OPTION</span>';
                 titleText = `Select: "${step.optionText || step.value || 'Option'}"`;
                 subText = `${step.selector || 'dropdown'} · Selects option in list`;
+            } else if (step.action === 'condition') {
+                li.classList.add('step-condition');
+                const isColor = step.conditionType === 'color';
+                const text = isColor ? (step.detectColor || '?') : (step.expectedText || '?');
+                const matchCount = (step.matchSteps || []).length;
+                const noMatchCount = (step.noMatchSteps || []).length;
+                badgeHtml = `<span class="step-type-badge type-condition">${isColor ? '🎨 COLOR' : '📝 TEXT'} COND</span>`;
+                titleText = isColor ? `Color: ${text}` : `Text: "${text}"`;
+                subText = `<span class="branch-chip match-chip">Match: ${matchCount}</span> · <span class="branch-chip nomatch-chip">No-Match: ${noMatchCount}</span>`;
             } else if (step.action === 'smartClick') {
                 li.classList.add('step-smart');
                 badgeHtml = '<span class="step-type-badge type-smart">🎯 SMART CLICK</span>';
@@ -274,7 +348,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Toggle a step between Dynamic Paragraph and Static Text
+    // Toggle a step between Dynamic Paragraph, Static Text, and Clipboard Paste
     function toggleStepParaBox(index) {
         chrome.storage.local.get(['steps'], (data) => {
             let steps = data.steps || [];
@@ -282,6 +356,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (steps[index].action === 'fillParagraph') {
                 steps[index].action = 'fillStatic';
+            } else if (steps[index].action === 'fillStatic') {
+                steps[index].action = 'pasteClipboard';
             } else {
                 steps[index].action = 'fillParagraph';
             }

@@ -1650,6 +1650,22 @@ input:checked + .toggle-track.small .toggle-thumb { left: 14px; }
     color: var(--accent-light);
 }
 
+.step-type-badge.type-clipboard {
+    background: rgba(245, 158, 11, 0.15);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    color: var(--gold-light);
+}
+
+#stepList li.step-clipboard {
+    border-left-color: var(--gold);
+}
+
+#stepList li.step-clipboard .step-num {
+    background: var(--gold-gradient);
+    box-shadow: 0 2px 8px rgba(245, 158, 11, 0.35);
+    color: #1a1a2e;
+}
+
 .toggle-para-btn {
     display: inline-flex;
     align-items: center;

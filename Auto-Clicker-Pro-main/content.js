@@ -1,7 +1,11 @@
 // ========================================================
 // Auto Clicker & Form Filler Pro - Content Script
-// Handles recording, smart element selection, option boxes,
-// and rotating dynamic paragraph filling from TXT files.
+// Full implementation including:
+// 1. Rotating Dynamic Paragraphs from TXT files
+// 2. Dropdown & Option Box Selection
+// 3. Clipboard Pasting Step
+// 4. Area Selection & Color/Text Condition Branches
+// 5. Smart Form Filling & Element Highlighting
 // ========================================================
 
 const contentSend = (msg) => {
@@ -19,6 +23,15 @@ let recordingPaused = false;
 let stopExecution = false;
 let lastActiveFieldStepIndex = null;
 let lastFieldPillEl = null;
+
+// Condition branch recording state
+let branchRecordingActive = false;
+let conditionFlowType = null; // 'color' | 'text'
+let conditionFlowState = null; // 'match' | 'nomatch'
+let conditionArea = null;
+let conditionTargetValue = null;
+let branchMatchSteps = [];
+let branchNoMatchSteps = [];
 
 // Initialize on load
 const init = () => {
@@ -72,7 +85,6 @@ const getCSSSelector = (el) => {
     // 1. Direct ID if valid and not dynamically generated noise
     if (el.id && typeof el.id === 'string') {
         const id = el.id.trim();
-        // Ignore IDs that look like generated hashes or dynamic React/ember IDs
         if (!/[:\s]/.test(id) && !/^(:r|ember|react-|__)/.test(id) && !/\d{6,}/.test(id)) {
             try {
                 const test = document.querySelectorAll(`#${CSS.escape(id)}`);
@@ -181,11 +193,9 @@ const isOptionBox = (el) => {
     const role = el.getAttribute('role');
     if (role === 'option' || role === 'menuitem' || role === 'menuitemradio') return true;
 
-    // Check class or attributes
     const cls = typeof el.className === 'string' ? el.className.toLowerCase() : '';
     if (cls.includes('option') || cls.includes('dropdown-item') || cls.includes('select__option') || cls.includes('menu-item')) return true;
 
-    // Inside a dropdown / listbox container
     const parentContainer = el.closest('[role="listbox"], [role="menu"], .dropdown-menu, .select-options, ul.options, select');
     if (parentContainer && (el.tagName === 'LI' || el.tagName === 'DIV' || el.tagName === 'SPAN' || el.tagName === 'BUTTON')) {
         return true;
@@ -199,8 +209,8 @@ const isOptionBox = (el) => {
 const startRecordingLocally = () => {
     recordingActive = true;
     recordingPaused = false;
+    branchRecordingActive = false;
 
-    // Event listeners for user interactions
     document.removeEventListener('click', recordClickHandler, true);
     document.addEventListener('click', recordClickHandler, true);
 
@@ -225,6 +235,7 @@ const startRecordingLocally = () => {
 const stopRecordingLocally = () => {
     recordingActive = false;
     recordingPaused = false;
+    branchRecordingActive = false;
 
     document.removeEventListener('click', recordClickHandler, true);
     document.removeEventListener('change', recordChangeHandler, true);
@@ -236,11 +247,11 @@ const stopRecordingLocally = () => {
     removeHighlight();
     removeFieldPill();
     hideRecordingBanner();
+    hideAreaOverlay();
 };
 
 // Main Click Handler during recording
 const recordClickHandler = (e) => {
-    // Ignore clicks on our extension banner, field pills, or indicators
     if (e.target.closest('#acp-recorder-banner') || e.target.closest('.acp-field-pill') || e.target.closest('.acp-click-indicator')) {
         return;
     }
@@ -249,6 +260,27 @@ const recordClickHandler = (e) => {
 
     const el = e.target;
     createClickIndicator(e.pageX, e.pageY, isOptionBox(el) ? 'option' : (isTextInputField(el) ? 'fill' : 'smart'));
+
+    // --- Branch Recording Mode (for Condition Match/No-Match Steps) ---
+    if (branchRecordingActive) {
+        const branchStep = {
+            action: 'smartClick',
+            selector: getCSSSelector(el),
+            tagName: el.tagName || '',
+            elementText: (el.textContent || '').trim().substring(0, 60),
+            delay: 1000,
+            x: e.clientX,
+            y: e.clientY
+        };
+        if (conditionFlowState === 'match') {
+            branchMatchSteps.push(branchStep);
+            showBannerToast(`Match Step #${branchMatchSteps.length} recorded`);
+        } else {
+            branchNoMatchSteps.push(branchStep);
+            showBannerToast(`No-Match Step #${branchNoMatchSteps.length} recorded`);
+        }
+        return;
+    }
 
     // --- CASE 1: Dropdown Option Box Clicked ---
     if (isOptionBox(el)) {
@@ -274,7 +306,6 @@ const recordClickHandler = (e) => {
 
     // --- CASE 2: Native <select> Element Clicked ---
     if (el.tagName && el.tagName.toLowerCase() === 'select') {
-        // Native select opens OS menu; change event will record the option selection
         return;
     }
 
@@ -303,7 +334,7 @@ const recordClickHandler = (e) => {
         return;
     }
 
-    // --- CASE 4: Standard Element Click (Button, Link, Dropdown Trigger, etc.) ---
+    // --- CASE 4: Standard Element Click ---
     const step = {
         action: 'smartClick',
         selector: getCSSSelector(el),
@@ -329,7 +360,6 @@ const recordChangeHandler = (e) => {
     const el = e.target;
     if (!el || el.closest('#acp-recorder-banner')) return;
 
-    // Native <select> option selection
     if (el.tagName && el.tagName.toLowerCase() === 'select') {
         const selOption = el.selectedOptions && el.selectedOptions[0];
         const optionText = selOption ? selOption.text : el.value;
@@ -348,7 +378,6 @@ const recordChangeHandler = (e) => {
         return;
     }
 
-    // Input/Textarea change
     if (isTextInputField(el) && lastActiveFieldStepIndex !== null) {
         if (recordedSteps[lastActiveFieldStepIndex] && recordedSteps[lastActiveFieldStepIndex].action === 'fillStatic') {
             recordedSteps[lastActiveFieldStepIndex].value = el.value || el.textContent || '';
@@ -357,7 +386,6 @@ const recordChangeHandler = (e) => {
     }
 };
 
-// Blur Handler to capture typed static text
 const recordBlurHandler = (e) => {
     if (!recordingActive || recordingPaused) return;
     const el = e.target;
@@ -374,14 +402,216 @@ const recordBlurHandler = (e) => {
 // Key Listener
 const recordingKeyListener = (e) => {
     if (e.key === 'Escape') {
-        chrome.storage.local.set({ isRecording: false });
+        if (branchRecordingActive) {
+            handleFinishBranch();
+        } else {
+            chrome.storage.local.set({ isRecording: false });
+        }
+    } else if ((e.key === 'c' || e.key === 'C') && !branchRecordingActive) {
+        startColorConditionFlow();
+    } else if ((e.key === 't' || e.key === 'T') && !branchRecordingActive) {
+        startTextConditionFlow();
     }
+};
+
+// ========================================================
+// Area Selection & Condition Branch Flow Implementation
+// ========================================================
+const startAreaSelectionFlow = () => {
+    alert('Click OK, then click and drag to select an area box on the page.');
+    document.body.classList.add('acp-area-selecting');
+
+    const onMouseDown = (e) => {
+        if (e.button !== 0) return;
+        e.preventDefault(); e.stopPropagation();
+        const startX = e.pageX, startY = e.pageY;
+        const overlay = createAreaOverlay();
+
+        const onMove = (me) => {
+            const x = Math.min(startX, me.pageX), y = Math.min(startY, me.pageY);
+            const w = Math.abs(me.pageX - startX), h = Math.abs(me.pageY - startY);
+            overlay.style.left = x + 'px'; overlay.style.top = y + 'px';
+            overlay.style.width = w + 'px'; overlay.style.height = h + 'px';
+        };
+
+        const onUp = (ue) => {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            document.removeEventListener('mousedown', onMouseDown, true);
+            document.body.classList.remove('acp-area-selecting');
+
+            const w = Math.abs(ue.pageX - startX), h = Math.abs(ue.pageY - startY);
+            if (w < 5 || h < 5) {
+                overlay.remove();
+                return;
+            }
+
+            const area = { x: Math.min(startX, ue.pageX), y: Math.min(startY, ue.pageY), width: w, height: h };
+            chrome.storage.local.set({ selectedArea: area });
+            showBannerToast(`Area Selected: ${w}x${h}px`);
+            setTimeout(() => overlay.remove(), 1500);
+        };
+
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+    };
+
+    document.addEventListener('mousedown', onMouseDown, true);
+};
+
+const startColorConditionFlow = () => {
+    alert('Click OK, then DRAW A BOX around the area to scan for color.');
+    document.body.classList.add('acp-area-selecting');
+
+    const onMouseDown = (e) => {
+        if (e.button !== 0) return;
+        e.preventDefault(); e.stopPropagation();
+        const startX = e.pageX, startY = e.pageY;
+        const overlay = createAreaOverlay();
+
+        const onMove = (me) => {
+            const x = Math.min(startX, me.pageX), y = Math.min(startY, me.pageY);
+            const w = Math.abs(me.pageX - startX), h = Math.abs(me.pageY - startY);
+            overlay.style.left = x + 'px'; overlay.style.top = y + 'px';
+            overlay.style.width = w + 'px'; overlay.style.height = h + 'px';
+        };
+
+        const onUp = (ue) => {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            document.removeEventListener('mousedown', onMouseDown, true);
+            document.body.classList.remove('acp-area-selecting');
+
+            const w = Math.abs(ue.pageX - startX), h = Math.abs(ue.pageY - startY);
+            if (w < 5 || h < 5) { overlay.remove(); return; }
+
+            const area = { x: Math.min(startX, ue.pageX), y: Math.min(startY, ue.pageY), width: w, height: h };
+            overlay.remove();
+
+            const color = prompt('Enter color hex to detect (e.g. #3b82f6 or #ff0000):', '#3b82f6');
+            if (!color) return;
+
+            conditionFlowType = 'color';
+            conditionArea = area;
+            conditionTargetValue = color;
+            conditionFlowState = 'match';
+            branchMatchSteps = [];
+            branchNoMatchSteps = [];
+            branchRecordingActive = true;
+
+            showRecordingBanner('match');
+            alert('Record clicks for when color MATCHES. Press ESC when done with Match branch.');
+        };
+
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+    };
+
+    document.addEventListener('mousedown', onMouseDown, true);
+};
+
+const startTextConditionFlow = () => {
+    alert('Click OK, then DRAW A BOX around the text area to scan.');
+    document.body.classList.add('acp-area-selecting');
+
+    const onMouseDown = (e) => {
+        if (e.button !== 0) return;
+        e.preventDefault(); e.stopPropagation();
+        const startX = e.pageX, startY = e.pageY;
+        const overlay = createAreaOverlay();
+
+        const onMove = (me) => {
+            const x = Math.min(startX, me.pageX), y = Math.min(startY, me.pageY);
+            const w = Math.abs(me.pageX - startX), h = Math.abs(me.pageY - startY);
+            overlay.style.left = x + 'px'; overlay.style.top = y + 'px';
+            overlay.style.width = w + 'px'; overlay.style.height = h + 'px';
+        };
+
+        const onUp = (ue) => {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            document.removeEventListener('mousedown', onMouseDown, true);
+            document.body.classList.remove('acp-area-selecting');
+
+            const w = Math.abs(ue.pageX - startX), h = Math.abs(ue.pageY - startY);
+            if (w < 5 || h < 5) { overlay.remove(); return; }
+
+            const area = { x: Math.min(startX, ue.pageX), y: Math.min(startY, ue.pageY), width: w, height: h };
+            overlay.remove();
+
+            const text = prompt('Enter expected text to search for:');
+            if (!text) return;
+
+            conditionFlowType = 'text';
+            conditionArea = area;
+            conditionTargetValue = text;
+            conditionFlowState = 'match';
+            branchMatchSteps = [];
+            branchNoMatchSteps = [];
+            branchRecordingActive = true;
+
+            showRecordingBanner('match');
+            alert('Record clicks for when text MATCHES. Press ESC when done with Match branch.');
+        };
+
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+    };
+
+    document.addEventListener('mousedown', onMouseDown, true);
+};
+
+const handleFinishBranch = () => {
+    if (conditionFlowState === 'match') {
+        conditionFlowState = 'nomatch';
+        showRecordingBanner('nomatch');
+        alert('Now record clicks for when condition DOES NOT MATCH. Press ESC when finished.');
+    } else {
+        // Complete condition step
+        const condStep = {
+            action: 'condition',
+            conditionType: conditionFlowType,
+            area: conditionArea,
+            detectColor: conditionFlowType === 'color' ? conditionTargetValue : undefined,
+            expectedText: conditionFlowType === 'text' ? conditionTargetValue : undefined,
+            matchSteps: [...branchMatchSteps],
+            noMatchSteps: [...branchNoMatchSteps],
+            delay: 1000
+        };
+        recordedSteps.push(condStep);
+        saveSteps();
+
+        branchRecordingActive = false;
+        conditionFlowState = null;
+        showRecordingBanner();
+        showBannerToast('Condition Step successfully added!');
+    }
+};
+
+const createAreaOverlay = () => {
+    let overlay = document.getElementById('acp-area-overlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'acp-area-overlay';
+        overlay.style.position = 'absolute';
+        overlay.style.border = '2px dashed #00bcd4';
+        overlay.style.background = 'rgba(0,188,212,0.12)';
+        overlay.style.zIndex = '2147483646';
+        overlay.style.pointerEvents = 'none';
+        document.body.appendChild(overlay);
+    }
+    return overlay;
+};
+
+const hideAreaOverlay = () => {
+    const overlay = document.getElementById('acp-area-overlay');
+    if (overlay) overlay.remove();
 };
 
 // ========================================================
 // On-Screen UI & Floating Banners
 // ========================================================
-const showRecordingBanner = () => {
+const showRecordingBanner = (branch = null) => {
     if (!document.body) return;
 
     let banner = document.getElementById('acp-recorder-banner');
@@ -392,6 +622,12 @@ const showRecordingBanner = () => {
     }
 
     const stepCount = recordedSteps.length;
+    let branchBadge = '';
+    if (branch === 'match') {
+        branchBadge = '<div class="acp-banner-branch match">Recording: MATCH Branch</div>';
+    } else if (branch === 'nomatch') {
+        branchBadge = '<div class="acp-banner-branch nomatch">Recording: NO-MATCH Branch</div>';
+    }
 
     banner.innerHTML = `
         <div class="acp-banner-icon">
@@ -404,7 +640,8 @@ const showRecordingBanner = () => {
                 <strong>Recording Active</strong>
                 <span id="acp-banner-count" class="acp-step-badge">${stepCount} Steps</span>
             </div>
-            <span><b>Esc</b> or button to finish · Click dropdowns & fields</span>
+            <span><b>Esc</b> Stop · <b>C</b> Color Cond · <b>T</b> Text Cond</span>
+            ${branchBadge}
             <div id="acp-banner-toast" class="acp-banner-toast" style="display:none;"></div>
         </div>
         <div class="acp-banner-controls">
@@ -415,7 +652,11 @@ const showRecordingBanner = () => {
 
     document.getElementById('acp-stop-btn').onclick = (e) => {
         e.stopPropagation();
-        chrome.storage.local.set({ isRecording: false });
+        if (branchRecordingActive) {
+            handleFinishBranch();
+        } else {
+            chrome.storage.local.set({ isRecording: false });
+        }
     };
 
     const pauseBtn = document.getElementById('acp-pause-btn');
@@ -452,7 +693,7 @@ const showBannerToast = (msg) => {
     updateBannerStepCount();
 };
 
-// Floating Field Designation Pill (Static Text vs Dynamic Paragraph)
+// Floating Field Designation Pill (Static Text vs Dynamic Paragraph vs Clipboard Paste)
 const showFieldDesignationPill = (el, stepIndex) => {
     removeFieldPill();
     if (!el) return;
@@ -468,6 +709,9 @@ const showFieldDesignationPill = (el, stepIndex) => {
         <span style="font-size:10px; color:#c4b5fd;">Field:</span>
         <button id="acp-set-para-btn" class="acp-field-pill-btn para-btn" title="Set this field to fill with next paragraph from TXT file on each rotation">
             📄 Set as Para Box (TXT)
+        </button>
+        <button id="acp-set-paste-btn" class="acp-field-pill-btn" style="color:#fbbf24; border-color:rgba(245,158,11,0.3);" title="Set this field to paste system clipboard content">
+            📋 Paste Clipboard
         </button>
         <button id="acp-dismiss-pill-btn" class="acp-field-pill-btn" title="Keep as regular static text">
             ✓ Done
@@ -487,12 +731,21 @@ const showFieldDesignationPill = (el, stepIndex) => {
         removeFieldPill();
     };
 
+    document.getElementById('acp-set-paste-btn').onclick = (e) => {
+        e.stopPropagation();
+        if (recordedSteps[stepIndex]) {
+            recordedSteps[stepIndex].action = 'pasteClipboard';
+            saveSteps();
+            showBannerToast('⭐ Designated as Clipboard Paste Field!');
+        }
+        removeFieldPill();
+    };
+
     document.getElementById('acp-dismiss-pill-btn').onclick = (e) => {
         e.stopPropagation();
         removeFieldPill();
     };
 
-    // Auto dismiss after 8s if no interaction
     setTimeout(() => {
         if (lastFieldPillEl === pill) removeFieldPill();
     }, 8000);
@@ -552,6 +805,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         startRecordingLocally();
     } else if (msg.action === 'stopRecordingSession') {
         stopRecordingLocally();
+    } else if (msg.action === 'startAreaSelection') {
+        startAreaSelectionFlow();
+    } else if (msg.action === 'startColorCondition') {
+        startColorConditionFlow();
+    } else if (msg.action === 'startTextCondition') {
+        startTextConditionFlow();
     } else if (msg.action === 'testSingleStep') {
         executeStep(msg.step).then(() => {
             sendResponse({ success: true });
@@ -585,7 +844,6 @@ const isElementVisible = (el) => {
 
 // Robust multi-strategy element search
 const findElementSmart = async (step) => {
-    // 1. Selector
     if (step.selector) {
         try {
             const el = document.querySelector(step.selector);
@@ -593,7 +851,6 @@ const findElementSmart = async (step) => {
         } catch (e) {}
     }
 
-    // 2. ID attribute
     if (step.idAttr) {
         try {
             const el = document.getElementById(step.idAttr);
@@ -601,7 +858,6 @@ const findElementSmart = async (step) => {
         } catch (e) {}
     }
 
-    // 3. Name attribute
     if (step.nameAttr) {
         try {
             const el = document.querySelector(`[name="${CSS.escape(step.nameAttr)}"]`);
@@ -609,7 +865,6 @@ const findElementSmart = async (step) => {
         } catch (e) {}
     }
 
-    // 4. Placeholder
     if (step.placeholder) {
         try {
             const el = document.querySelector(`[placeholder="${CSS.escape(step.placeholder)}"]`);
@@ -617,7 +872,6 @@ const findElementSmart = async (step) => {
         } catch (e) {}
     }
 
-    // 5. Aria label
     if (step.ariaLabel) {
         try {
             const el = document.querySelector(`[aria-label="${CSS.escape(step.ariaLabel)}"]`);
@@ -625,7 +879,6 @@ const findElementSmart = async (step) => {
         } catch (e) {}
     }
 
-    // 6. Option text matching (for dropdown options)
     if (step.isOption || step.action === 'selectOption') {
         const textToFind = (step.optionText || step.value || step.elementText || '').trim().toLowerCase();
         if (textToFind) {
@@ -643,7 +896,6 @@ const findElementSmart = async (step) => {
         }
     }
 
-    // 7. General text content (for buttons, links, etc.)
     if (step.elementText && step.tagName) {
         const textToFind = step.elementText.trim().toLowerCase();
         const candidates = document.querySelectorAll(step.tagName);
@@ -659,7 +911,6 @@ const findElementSmart = async (step) => {
         }
     }
 
-    // 8. Coordinates fallback
     if (typeof step.x === 'number' && typeof step.y === 'number') {
         const vx = step.clientX !== undefined ? step.clientX : step.x;
         const vy = step.clientY !== undefined ? step.clientY : step.y;
@@ -670,7 +921,7 @@ const findElementSmart = async (step) => {
     return null;
 };
 
-// Waits for element to appear (e.g. after a dropdown opens)
+// Waits for element to appear
 const waitForElement = async (step, timeoutMs = 2500) => {
     const startTime = Date.now();
     while (Date.now() - startTime < timeoutMs) {
@@ -681,7 +932,7 @@ const waitForElement = async (step, timeoutMs = 2500) => {
     return findElementSmart(step);
 };
 
-// Fill a form field (input, textarea, select, contenteditable)
+// Fill a form field
 const fillFormField = (el, text) => {
     if (!el) return;
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -721,7 +972,7 @@ const fillFormField = (el, text) => {
     el.dispatchEvent(new Event('blur', { bubbles: true }));
 };
 
-// Select a dropdown option (native select or custom option box)
+// Select a dropdown option
 const selectDropdownOption = async (step) => {
     const el = await waitForElement(step);
     if (!el) return false;
@@ -729,7 +980,6 @@ const selectDropdownOption = async (step) => {
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
     if (el.tagName && el.tagName.toLowerCase() === 'select') {
-        // Native select
         const option = Array.from(el.options).find(opt =>
             (step.value && opt.value === step.value) ||
             (step.optionText && opt.text.trim().toLowerCase() === step.optionText.trim().toLowerCase()) ||
@@ -745,7 +995,6 @@ const selectDropdownOption = async (step) => {
         return true;
     }
 
-    // Custom option box (click on it)
     dispatchClickEvents(el);
     return true;
 };
@@ -775,11 +1024,56 @@ const dispatchClickEvents = (el) => {
     el.dispatchEvent(new MouseEvent('click', mouseOpts));
 };
 
+// Condition Scanning Helpers
+const scanAreaForColor = (area, targetColor) => {
+    if (!area || !targetColor) return false;
+    const target = targetColor.trim().toLowerCase();
+    const all = document.querySelectorAll('*');
+    for (const el of all) {
+        if (!isElementVisible(el)) continue;
+        const r = el.getBoundingClientRect();
+        if (r.left < area.x + area.width && r.right > area.x &&
+            r.top < area.y + area.height && r.bottom > area.y) {
+            const cs = window.getComputedStyle(el);
+            if (colorMatches(cs.backgroundColor, target) || colorMatches(cs.color, target)) {
+                return true;
+            }
+        }
+    }
+    return false;
+};
+
+const colorMatches = (rgbStr, targetHex) => {
+    if (!rgbStr || !targetHex) return false;
+    const match = rgbStr.match(/\d+/g);
+    if (!match || match.length < 3) return false;
+    const r = parseInt(match[0]), g = parseInt(match[1]), b = parseInt(match[2]);
+    const hex = "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1).toLowerCase();
+    return hex === targetHex.toLowerCase();
+};
+
+const scanAreaForText = (area, expectedText) => {
+    if (!area || !expectedText) return false;
+    const target = expectedText.trim().toLowerCase();
+    const all = document.querySelectorAll('*');
+    for (const el of all) {
+        if (!isElementVisible(el)) continue;
+        const r = el.getBoundingClientRect();
+        if (r.left < area.x + area.width && r.right > area.x &&
+            r.top < area.y + area.height && r.bottom > area.y) {
+            if (el.textContent && el.textContent.toLowerCase().includes(target)) {
+                return true;
+            }
+        }
+    }
+    return false;
+};
+
 // Execute single step
 const executeStep = async (step) => {
     if (stopExecution) return;
 
-    // --- Dynamic Paragraph Fill ---
+    // --- Dynamic Paragraph Fill (from TXT) ---
     if (step.action === 'fillParagraph' || step.action === 'fillField') {
         const data = await storageGet('paragraphs');
         const paragraphs = data.paragraphs || [];
@@ -790,7 +1084,6 @@ const executeStep = async (step) => {
             return;
         }
 
-        // Consume 1st paragraph (FIFO queue)
         const currentPara = paragraphs.shift();
         await storageSet({ paragraphs });
 
@@ -798,6 +1091,28 @@ const executeStep = async (step) => {
         if (el) {
             fillFormField(el, currentPara);
             createClickIndicator(el.getBoundingClientRect().left, el.getBoundingClientRect().top, 'fill');
+        }
+        return;
+    }
+
+    // --- Clipboard Pasting Step ---
+    if (step.action === 'pasteClipboard') {
+        const el = await waitForElement(step);
+        if (el) {
+            let clipboardText = '';
+            try {
+                clipboardText = await navigator.clipboard.readText();
+            } catch (e) {
+                // If readText requires focused document, focus element first
+                el.focus();
+                try {
+                    clipboardText = await navigator.clipboard.readText();
+                } catch (err) {}
+            }
+            if (clipboardText) {
+                fillFormField(el, clipboardText);
+                createClickIndicator(el.getBoundingClientRect().left, el.getBoundingClientRect().top, 'fill');
+            }
         }
         return;
     }
@@ -815,6 +1130,23 @@ const executeStep = async (step) => {
     // --- Dropdown Option Selection ---
     if (step.action === 'selectOption') {
         await selectDropdownOption(step);
+        return;
+    }
+
+    // --- Condition Branch Step (Color or Text) ---
+    if (step.action === 'condition') {
+        let matched = false;
+        if (step.conditionType === 'color') {
+            matched = scanAreaForColor(step.area, step.detectColor);
+        } else if (step.conditionType === 'text') {
+            matched = scanAreaForText(step.area, step.expectedText);
+        }
+        const branchSteps = matched ? (step.matchSteps || []) : (step.noMatchSteps || []);
+        for (const subStep of branchSteps) {
+            if (stopExecution) break;
+            await new Promise(r => setTimeout(r, subStep.delay || 500));
+            await executeStep(subStep);
+        }
         return;
     }
 
@@ -845,7 +1177,6 @@ const executeSteps = async (steps, loop) => {
         for (let i = 0; i < steps.length; i++) {
             if (stopExecution) break;
 
-            // Send real-time progress update to popup
             contentSend({
                 action: 'progressUpdate',
                 data: {
@@ -857,14 +1188,12 @@ const executeSteps = async (steps, loop) => {
                 }
             });
 
-            // Wait for step delay before execution
             await new Promise(r => setTimeout(r, steps[i].delay || 1000));
             if (stopExecution) break;
 
             await executeStep(steps[i]);
         }
 
-        // If there is another rotation coming up, wait for rotationDelay
         if (currentLoop < loopCount && !stopExecution) {
             contentSend({
                 action: 'progressUpdate',

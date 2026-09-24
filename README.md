@@ -1,6 +1,6 @@
 # Auto Clicker & Form Filler Pro 🚀
 
-An advanced, user-friendly Chrome extension built for automated form filling and click sequences. It supports filling repeated forms with identical fixed information (Name, Email, Address, Option Selections) while dynamically rotating through unique paragraphs loaded from a `.txt` file, consuming one paragraph per rotation.
+An advanced, user-friendly Chrome extension built for automated form filling and click sequences. It supports filling repeated forms with identical fixed information (Name, Email, Address, Option Selections) while dynamically rotating through unique paragraphs loaded from a `.txt` file (consuming one paragraph per rotation), pasting from the system clipboard, and executing smart color and text condition branches.
 
 ---
 
@@ -13,16 +13,30 @@ An advanced, user-friendly Chrome extension built for automated form filling and
 - **Save / Export Remaining TXT:** Download the remaining unused paragraphs anytime as an updated `.txt` file with one click!
 - **Flexible Import:** Load a `.txt` file via file picker or paste text directly (with support for blank lines or single line paragraph delimiters).
 
-### 2. 🔽 Dropdown & Option Box Selection
+### 2. 📋 Clipboard Pasting Step
+- **System Clipboard Injection:** Designate any field as a **📋 Paste Clipboard** step.
+- During playback, the extension automatically reads the current system clipboard content and pastes it into the field, dispatching native reactive form events.
+- Easy one-click toggle in the step list or via the on-page floating pill while recording.
+
+### 3. 🔽 Dropdown & Option Box Selection
 - **Custom Dropdowns:** Record clicking the dropdown/select box trigger to open options, and then click on your desired option inside. During playback, the extension automatically waits for the dropdown menu to open and clicks the option item.
 - **Native `<select>` Elements:** Automatically detects and records option changes on standard HTML `<select>` tags by option text, value, and index.
-- **Framework Compatibility:** Dispatches native input, change, and pointer events compatible with React, Vue, Angular, and vanilla web forms.
+- **Framework Compatibility:** Dispatches native input, change, pointerdown, and click events compatible with React, Vue, Angular, and vanilla web forms.
 
-### 3. ✍️ Static Form Fields with Same Info
+### 4. 🔀 Smart Mode: Area Selection & Condition Branches
+- **Area Selection:** Click **Area** to draw a custom rectangular overlay on any webpage and save its coordinates.
+- **Color Condition:** Detect if a specific color appears within an area on the page, and execute separate click sequences for the **Match** branch vs the **No-Match** branch.
+- **Text Condition:** Detect if specific text appears in an area, running different click branches based on the result.
+- **Quick Hotkeys During Recording:**
+  - `C` or `c`: Start Color Condition flow
+  - `T` or `t`: Start Text Condition flow
+  - `Esc`: Finish recording or complete branch
+
+### 5. ✍️ Static Form Fields with Same Info
 - **Fill Static Fields:** Fill unchanging fields (e.g., Name, Email, Phone, Company, Checkboxes) across every rotation.
-- **One-Click Para Box Designation:** In the popup step list (or on the web page), click **📄 Set as Para Box** on any field to convert it from static text to the dynamic paragraph filler.
+- **One-Click Field Designation:** In the popup step list (or on the web page), easily cycle between **📄 Dynamic Para**, **✍️ Static Text**, and **📋 Clipboard Paste**.
 
-### 4. ⚡ Sequence & Looping Controls
+### 6. ⚡ Sequence & Looping Controls
 - **Match TXT Count:** Click **⚡ Match TXT** to instantly set the rotation loop count to the exact number of remaining paragraphs.
 - **Custom Delays & Rotation Delay:** Set millisecond delays before individual steps, plus a configurable delay between rotations (to allow form submissions to process).
 - **Step Testing & Reordering:** Move steps up (▲) or down (▼) to adjust execution order, and test any single step on the live page with ▶.
@@ -51,10 +65,13 @@ An advanced, user-friendly Chrome extension built for automated form filling and
    - Click the form's **Submit** button.
 4. Press **Esc** or click **Finish** on the floating banner when done.
 
-### Step 2: Designate the Paragraph Box
+### Step 2: Designate the Field Actions
 1. Open the extension popup.
 2. In the **Form Steps** list, locate the step for your message or main text area.
-3. Click **📄 Set as Para Box**. The step will turn green and display `📄 PARA BOX (Injects TXT Paragraph)`.
+3. Click the button to cycle it to:
+   - **`📄 PARA BOX`**: Injects next paragraph from TXT file on each rotation.
+   - **`📋 PASTE CLIPBOARD`**: Injects current system clipboard.
+   - **`✍️ STATIC TEXT`**: Keeps entered text the same on each rotation.
 
 ### Step 3: Load Your TXT File
 1. Under **Paragraph Library**, click **Load TXT** and select your `.txt` file (or click **Paste**).
